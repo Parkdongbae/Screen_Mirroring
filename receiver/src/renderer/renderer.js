@@ -4,7 +4,7 @@ const $ = (id) => document.getElementById(id);
 const api = window.mirror;
 
 let settings = {};
-let current = { state: 'idle' };
+let current = { sessions: [] };
 
 // ---------- 알림 ----------
 function toast(text, level = 'info', ms = 6000) {
@@ -17,24 +17,30 @@ function toast(text, level = 'info', ms = 6000) {
 
 // ---------- 화면 전환 ----------
 let expiryTimer = null;
+const tiles = new Map(); // id -> tile
+let focusId = null;
 
 function render(s) {
-  const prev = current.state;
   current = s;
-  const state = s.state;
-  $('idle').classList.toggle('hidden', !(state === 'idle' || state === 'request'));
-  $('waiting').classList.toggle('hidden', state !== 'waiting');
-  $('stream').classList.toggle('hidden', state !== 'streaming');
-  $('request').classList.toggle('hidden', state !== 'request');
+  const shown = s.sessions.filter((x) => x.state === 'waiting' || x.state === 'streaming');
+  const requests = s.sessions.filter((x) => x.state === 'request');
+  $('idle').classList.toggle('hidden', shown.length > 0);
+  $('stage').classList.toggle('hidden', shown.length === 0);
 
+  // 대기 화면
   $('pc-name').textContent = s.pcName || '교실 PC';
   if (s.code) {
     $('code').textContent = s.code;
-    if (s.qr) $('qr').src = s.qr;
+    if (s.qr) {
+      $('qr').src = s.qr;
+      $('join-qr').src = s.qr;
+    }
   }
-  $('address').textContent = s.ips && s.ips.length ? `PC 주소 ${s.ips.join(', ')} · 포트 ${s.port}` : '네트워크에 연결되어 있지 않습니다.';
+  const address = s.ips && s.ips.length ? `PC 주소 ${s.ips.join(', ')}${s.port !== 47600 ? ` · 포트 ${s.port}` : ''}` : '네트워크에 연결되어 있지 않습니다.';
+  $('address').textContent = address;
+  $('join-address').textContent = address;
   clearInterval(expiryTimer);
-  if (state === 'idle' && s.expiresAt) {
+  if (s.expiresAt) {
     const tick = () => {
       const left = Math.max(0, Math.round((s.expiresAt - Date.now()) / 1000));
       $('expires').textContent = `${Math.floor(left / 60)}분 ${String(left % 60).padStart(2, '0')}초 후 새 코드로 바뀝니다`;
@@ -42,47 +48,136 @@ function render(s) {
     tick();
     expiryTimer = setInterval(tick, 1000);
   }
-  if (state === 'request') {
-    $('request-device').textContent = s.device || '휴대전화';
-    $('btn-approve').focus();
+
+  // 공유 중 참여 코드
+  $('join-code').textContent = s.full ? '가득 참' : s.code || '------';
+  $('join-code-big').textContent = s.code || '';
+  $('join-count').textContent = `${s.sessions.filter((x) => x.state !== 'request').length}/${s.max || 6}대`;
+
+  renderRequests(requests);
+  renderTiles(shown);
+}
+
+function renderRequests(requests) {
+  $('requests').classList.toggle('hidden', requests.length === 0);
+  $('btn-approve-all').classList.toggle('hidden', requests.length < 2);
+  const list = $('request-list');
+  list.innerHTML = '';
+  for (const r of requests) {
+    const li = document.createElement('li');
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = r.device;
+    const no = document.createElement('button');
+    no.className = 'ghost';
+    no.textContent = '거절';
+    no.onclick = () => api.reject(r.id);
+    const yes = document.createElement('button');
+    yes.className = 'primary';
+    yes.textContent = '허용';
+    yes.onclick = () => api.approve(r.id);
+    li.append(name, no, yes);
+    list.appendChild(li);
   }
-  if (state === 'streaming') {
-    $('stream-device').textContent = s.device || '';
-    showUi();
+}
+
+// 대수에 따라 1×1, 2×1, 2×2, 3×2로 나눈다.
+function layoutFor(n) {
+  if (n <= 1) return [1, 1];
+  if (n === 2) return [2, 1];
+  if (n <= 4) return [2, 2];
+  return [3, 2];
+}
+
+function renderTiles(shown) {
+  const grid = $('grid');
+  const ids = new Set(shown.map((x) => x.id));
+  for (const [id, t] of tiles) if (!ids.has(id)) removeTile(id, t);
+  for (const sess of shown) {
+    let t = tiles.get(sess.id);
+    if (!t) t = createTile(sess.id);
+    t.el.classList.toggle('waiting', sess.state !== 'streaming');
+    t.el.querySelector('.tile-name').textContent = sess.device;
+    const mute = t.el.querySelector('.tile-mute');
+    mute.textContent = sess.muted ? '소리 꺼짐' : '소리 켜짐';
+    mute.classList.toggle('muted-on', sess.muted);
+    t.muted = sess.muted;
+    const badge = t.el.querySelector('.tile-badge');
+    const note = sess.audio === 'unsupported' ? '소리 미지원' : sess.audio === 'denied' ? '소리 권한 꺼짐' : null;
+    badge.textContent = note || '';
+    badge.classList.toggle('hidden', !note);
+    grid.appendChild(t.el); // 연결 순서대로 배치
   }
-  if (prev === 'streaming' && state !== 'streaming') {
-    resetVideo();
-    resetAudio();
-    $('stream-audio').classList.add('hidden');
+  if (focusId !== null && !tiles.has(focusId)) focusId = null;
+  const [cols, rows] = layoutFor(shown.length);
+  grid.style.setProperty('--cols', cols);
+  grid.style.setProperty('--rows', rows);
+  grid.classList.toggle('multi', shown.length > 1);
+  grid.classList.toggle('focused', focusId !== null);
+  for (const [id, t] of tiles) {
+    t.el.classList.toggle('focus', id === focusId);
+    t.el.querySelector('.tile-focus').textContent = id === focusId ? '나눠 보기' : '크게';
+    t.el.querySelector('.tile-focus').classList.toggle('hidden', shown.length < 2);
   }
+  if (shown.length) showUi();
+}
+
+function createTile(id) {
+  // 템플릿 문서가 아니라 현재 문서의 노드로 만들어야 캔버스를 그릴 수 있다.
+  const el = document.importNode($('tile-tpl').content.firstElementChild, true);
+  const canvas = el.querySelector('canvas');
+  const t = {
+    id,
+    el,
+    canvas,
+    ctx: null, // 화면에 붙은 뒤 처음 그릴 때 얻는다
+    decoder: null,
+    codec: null,
+    waitKey: true,
+    pending: null,
+    lastKeyRequest: 0,
+    muted: false,
+    audio: null,
+  };
+  el.querySelector('.tile-mute').onclick = () => api.mute(id, !t.muted);
+  el.querySelector('.tile-stop').onclick = () => api.stop(id);
+  el.querySelector('.tile-focus').onclick = () => {
+    focusId = focusId === id ? null : id;
+    renderTiles(current.sessions.filter((x) => x.state === 'waiting' || x.state === 'streaming'));
+  };
+  el.addEventListener('dblclick', () => el.querySelector('.tile-focus').click());
+  tiles.set(id, t);
+  return t;
+}
+
+function removeTile(id, t) {
+  resetVideo(t);
+  if (t.audio) {
+    try { t.audio.node.disconnect(); } catch {}
+  }
+  t.el.remove();
+  tiles.delete(id);
 }
 
 // ---------- 영상 ----------
-const canvas = $('video');
-const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
-let decoder = null;
-let configuredCodec = null;
-let waitKey = true;
-let pendingFrame = null;
-let lastKeyRequest = 0;
 
-function requestKeyframe() {
+function requestKeyframe(t) {
   const now = performance.now();
-  if (now - lastKeyRequest < 500) return;
-  lastKeyRequest = now;
-  api.keyframe();
+  if (now - t.lastKeyRequest < 500) return;
+  t.lastKeyRequest = now;
+  api.keyframe(t.id);
 }
 
-function resetVideo() {
-  if (decoder) {
-    try { decoder.close(); } catch {}
+function resetVideo(t) {
+  if (t.decoder) {
+    try { t.decoder.close(); } catch {}
   }
-  decoder = null;
-  configuredCodec = null;
-  waitKey = true;
-  if (pendingFrame) {
-    pendingFrame.close();
-    pendingFrame = null;
+  t.decoder = null;
+  t.codec = null;
+  t.waitKey = true;
+  if (t.pending) {
+    t.pending.close();
+    t.pending = null;
   }
 }
 
@@ -100,122 +195,135 @@ function codecFromAnnexB(u8) {
   return null;
 }
 
+// 개발 확인용 통계(개발 실행에서만 콘솔에 찍힌다)
+const dbg = { recv: 0, decoded: 0, drawn: 0, errors: 0 };
+setInterval(() => {
+  if (dbg.recv || dbg.errors) console.debug(`[render] recv=${dbg.recv} decoded=${dbg.decoded} drawn=${dbg.drawn} errors=${dbg.errors} tiles=${[...tiles.values()].map((t) => `${t.id}:${t.codec || '-'}:${t.canvas.width}x${t.canvas.height}`).join(',')}`);
+  Object.assign(dbg, { recv: 0, decoded: 0, drawn: 0, errors: 0 });
+}, 2000);
+
 function drawLoop() {
-  if (pendingFrame) {
-    const f = pendingFrame;
-    pendingFrame = null;
-    if (canvas.width !== f.displayWidth || canvas.height !== f.displayHeight) {
-      canvas.width = f.displayWidth;
-      canvas.height = f.displayHeight;
+  for (const t of tiles.values()) {
+    const f = t.pending;
+    if (!f) continue;
+    t.pending = null;
+    try {
+      if (t.canvas.width !== f.displayWidth || t.canvas.height !== f.displayHeight) {
+        t.canvas.width = f.displayWidth;
+        t.canvas.height = f.displayHeight;
+      }
+      t.ctx ??= t.canvas.getContext('2d', { alpha: false });
+      if (t.ctx) {
+        t.ctx.drawImage(f, 0, 0, t.canvas.width, t.canvas.height);
+        dbg.drawn++;
+      }
+    } catch (e) {
+      // 한 화면의 오류가 다른 화면 그리기를 멈추지 않게 한다.
+      dbg.errors++;
+      console.warn('draw error', t.id, e);
+    } finally {
+      f.close();
     }
-    ctx.drawImage(f, 0, 0, canvas.width, canvas.height);
-    f.close();
   }
   requestAnimationFrame(drawLoop);
 }
 requestAnimationFrame(drawLoop);
 
-function makeDecoder(codec) {
+function makeDecoder(t, codec) {
   const d = new VideoDecoder({
     output: (frame) => {
-      if (pendingFrame) pendingFrame.close(); // 가장 최근 프레임만 그린다
-      pendingFrame = frame;
+      dbg.decoded++;
+      if (t.pending) t.pending.close(); // 가장 최근 프레임만 그린다
+      t.pending = frame;
     },
     error: (e) => {
-      console.warn('decoder error', e);
-      resetVideo();
-      requestKeyframe();
+      dbg.errors++;
+      console.warn('decoder error', t.id, e);
+      resetVideo(t);
+      requestKeyframe(t);
     },
   });
   d.configure({ codec, optimizeForLatency: true, hardwareAcceleration: 'no-preference' });
   return d;
 }
 
-api.onVideoConfig(() => {
-  // 해상도·회전이 바뀌면 다음 키프레임부터 다시 시작한다.
-  waitKey = true;
+api.onVideoConfig(({ id }) => {
+  const t = tiles.get(id);
+  if (t) t.waitKey = true; // 해상도·회전이 바뀌면 다음 키프레임부터
 });
 
-api.onVideo(({ data, key, pts }) => {
+api.onVideo(({ id, data, key, pts }) => {
+  dbg.recv++;
+  const t = tiles.get(id);
+  if (!t) return;
   const u8 = data instanceof Uint8Array ? data : new Uint8Array(data);
-  if (waitKey && !key) {
-    requestKeyframe();
-    return;
-  }
+  if (t.waitKey && !key) return requestKeyframe(t);
   if (key) {
     const codec = codecFromAnnexB(u8);
-    if (codec && codec !== configuredCodec) {
-      resetVideo();
+    if (codec && codec !== t.codec) {
+      resetVideo(t);
       try {
-        decoder = makeDecoder(codec);
-        configuredCodec = codec;
-      } catch (e) {
+        t.decoder = makeDecoder(t, codec);
+        t.codec = codec;
+      } catch {
         toast('이 PC에서 영상을 재생할 수 없습니다(코덱 미지원).', 'error');
         return;
       }
     }
-    waitKey = false;
+    t.waitKey = false;
   }
-  if (!decoder) {
-    waitKey = true;
-    requestKeyframe();
-    return;
+  if (!t.decoder) {
+    t.waitKey = true;
+    return requestKeyframe(t);
   }
-  // 디코더가 밀리면 다음 키프레임까지 건너뛴다.
-  if (decoder.decodeQueueSize > 8 && !key) {
-    waitKey = true;
-    requestKeyframe();
-    return;
+  if (t.decoder.decodeQueueSize > 8 && !key) {
+    t.waitKey = true;
+    return requestKeyframe(t);
   }
   try {
-    decoder.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: pts, data: u8 }));
-  } catch (e) {
-    resetVideo();
-    requestKeyframe();
+    t.decoder.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: pts, data: u8 }));
+  } catch {
+    resetVideo(t);
+    requestKeyframe(t);
   }
 });
 
-// ---------- 소리 ----------
+// ---------- 소리: AudioContext 하나에 기기별 재생 노드를 섞는다 ----------
 let audioCtx = null;
-let gain = null;
-let player = null;
-let audioCfg = null;
-let audioStarting = null;
+let master = null;
+let audioReady = null;
 
-async function ensureAudio(cfg) {
-  if (audioCtx && audioCfg && audioCfg.rate === cfg.rate && audioCfg.channels === cfg.channels) return;
-  resetAudio();
-  audioCfg = cfg;
-  const ctx = new AudioContext({ sampleRate: cfg.rate, latencyHint: 'interactive' });
-  await ctx.audioWorklet.addModule('audio-worklet.js');
-  const node = new AudioWorkletNode(ctx, 'pcm-player', {
+function ensureAudioContext() {
+  if (audioReady) return audioReady;
+  audioReady = (async () => {
+    const ctx = new AudioContext({ sampleRate: 48000, latencyHint: 'interactive' });
+    await ctx.audioWorklet.addModule('audio-worklet.js');
+    master = ctx.createGain();
+    master.connect(ctx.destination);
+    audioCtx = ctx;
+    applyVolume();
+    await applySink();
+    if (ctx.state !== 'running') ctx.resume().catch(() => {});
+  })();
+  return audioReady;
+}
+
+async function setupTileAudio(t, cfg) {
+  await ensureAudioContext();
+  if (t.audio) {
+    try { t.audio.node.disconnect(); } catch {}
+  }
+  const node = new AudioWorkletNode(audioCtx, 'pcm-player', {
     numberOfInputs: 0,
     outputChannelCount: [2],
     processorOptions: { channels: cfg.channels },
   });
-  const g = ctx.createGain();
-  node.connect(g).connect(ctx.destination);
-  audioCtx = ctx;
-  gain = g;
-  player = node;
-  applyVolume();
-  await applySink();
-  if (ctx.state !== 'running') ctx.resume().catch(() => {});
-}
-
-function resetAudio() {
-  if (audioCtx) audioCtx.close().catch(() => {});
-  audioCtx = null;
-  gain = null;
-  player = null;
-  audioCfg = null;
-  audioStarting = null;
+  node.connect(master);
+  t.audio = { node, cfg, ratio: cfg.rate / audioCtx.sampleRate, carry: 0 };
 }
 
 function applyVolume() {
-  const vol = settings.muted ? 0 : Number(settings.volume ?? 1);
-  if (gain) gain.gain.value = vol;
-  $('btn-mute').textContent = settings.muted ? '소리 끔' : '소리 켬';
+  if (master) master.gain.value = Number(settings.volume ?? 1);
   $('volume').value = String(settings.volume ?? 1);
 }
 
@@ -230,49 +338,62 @@ async function applySink() {
   }
 }
 
-api.onAudioConfig((cfg) => {
-  audioStarting = ensureAudio(cfg).catch((e) => {
+api.onAudioConfig(({ id, rate, channels }) => {
+  const t = tiles.get(id);
+  if (!t) return;
+  t.audioSetup = setupTileAudio(t, { rate, channels }).catch((e) => {
     console.warn(e);
     toast('소리를 재생할 수 없습니다.', 'error');
   });
 });
 
-api.onAudio(async (data) => {
-  if (!player) {
-    if (audioStarting) await audioStarting;
-    if (!player) return;
+// 송신기의 표본율이 48kHz가 아니면 간단히 선형 보간으로 맞춘다.
+function toFloat(t, u8) {
+  const samples = new Int16Array(u8.buffer, u8.byteOffset, u8.byteLength >> 1);
+  const ch = t.audio.cfg.channels;
+  const ratio = t.audio.ratio;
+  if (Math.abs(ratio - 1) < 1e-6) {
+    const out = new Float32Array(samples.length);
+    for (let i = 0; i < samples.length; i++) out[i] = samples[i] / 32768;
+    return out;
+  }
+  const frames = samples.length / ch;
+  const outFrames = Math.max(0, Math.ceil((frames - t.audio.carry) / ratio));
+  const out = new Float32Array(Math.max(0, outFrames) * ch);
+  for (let o = 0; o < outFrames; o++) {
+    const pos = t.audio.carry + o * ratio;
+    const i0 = Math.min(frames - 1, Math.floor(pos));
+    const i1 = Math.min(frames - 1, i0 + 1);
+    const w = pos - i0;
+    for (let c = 0; c < ch; c++) out[o * ch + c] = ((1 - w) * samples[i0 * ch + c] + w * samples[i1 * ch + c]) / 32768;
+  }
+  t.audio.carry = Math.max(0, t.audio.carry + outFrames * ratio - frames);
+  return out;
+}
+
+api.onAudio(async ({ id, data }) => {
+  const t = tiles.get(id);
+  if (!t || t.muted) return;
+  if (!t.audio) {
+    if (t.audioSetup) await t.audioSetup;
+    if (!t.audio) return;
   }
   const u8 = data instanceof Uint8Array ? data : new Uint8Array(data);
-  const samples = new Int16Array(u8.buffer, u8.byteOffset, u8.byteLength >> 1);
-  const f32 = new Float32Array(samples.length);
-  for (let i = 0; i < samples.length; i++) f32[i] = samples[i] / 32768;
-  player.port.postMessage(f32, [f32.buffer]);
+  const f32 = toFloat(t, u8);
+  if (f32.length) t.audio.node.port.postMessage(f32, [f32.buffer]);
 });
 
-api.onAudioStatus((v) => {
-  const badge = $('stream-audio');
-  if (v === 'unsupported') {
-    badge.textContent = '이 휴대전화는 소리 전송을 지원하지 않습니다';
-    badge.classList.remove('hidden');
-  } else if (v === 'denied') {
-    badge.textContent = '휴대전화에서 소리 권한이 꺼져 있습니다';
-    badge.classList.remove('hidden');
-  } else {
-    badge.classList.add('hidden');
-  }
-});
-
-// ---------- 공유 화면 도구 모음 ----------
+// ---------- 도구 모음 ----------
 let uiTimer = null;
 function showUi() {
-  $('stream').classList.add('show-ui');
+  $('stage').classList.add('show-ui');
   clearTimeout(uiTimer);
   uiTimer = setTimeout(() => {
-    if (!$('toolbar').matches(':hover')) $('stream').classList.remove('show-ui');
-  }, 3000);
+    if (!document.querySelector('.tile-bar:hover, .toolbar:hover')) $('stage').classList.remove('show-ui');
+  }, 3500);
 }
-$('stream').addEventListener('pointermove', showUi);
-$('stream').addEventListener('pointerdown', showUi);
+$('stage').addEventListener('pointermove', showUi);
+$('stage').addEventListener('pointerdown', showUi);
 
 // ---------- 설정 ----------
 async function openSettings() {
@@ -334,29 +455,28 @@ $('btn-settings').addEventListener('click', openSettings);
 $('btn-settings-idle').addEventListener('click', openSettings);
 
 // ---------- 버튼 ----------
-$('btn-approve').addEventListener('click', () => api.approve());
-$('btn-reject').addEventListener('click', () => api.reject());
-$('btn-stop').addEventListener('click', () => api.stop());
-$('btn-cancel-waiting').addEventListener('click', () => api.stop());
+$('btn-approve-all').addEventListener('click', () => api.approveAll());
+$('btn-stop-all').addEventListener('click', () => api.stopAll());
+$('btn-mute-all').addEventListener('click', () => api.muteAll());
 $('btn-new-code').addEventListener('click', () => api.newCode());
 $('btn-fullscreen').addEventListener('click', () => api.fullscreen());
 $('btn-fullscreen-idle').addEventListener('click', () => api.fullscreen());
-$('btn-mute').addEventListener('click', () => {
-  settings.muted = !settings.muted;
-  api.saveSettings({ muted: settings.muted });
-  applyVolume();
-});
+$('btn-join').addEventListener('click', () => $('join').classList.remove('hidden'));
+$('btn-join-close').addEventListener('click', () => $('join').classList.add('hidden'));
 $('volume').addEventListener('input', (e) => {
   settings.volume = Number(e.target.value);
-  if (settings.muted && settings.volume > 0) settings.muted = false;
-  api.saveSettings({ volume: settings.volume, muted: settings.muted });
+  api.saveSettings({ volume: settings.volume });
   applyVolume();
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'F11') api.fullscreen();
   if (e.key === 'Escape') {
     if (!$('settings').classList.contains('hidden')) $('settings').classList.add('hidden');
-    else api.fullscreen(false);
+    else if (!$('join').classList.contains('hidden')) $('join').classList.add('hidden');
+    else if (focusId !== null) {
+      focusId = null;
+      renderTiles(current.sessions.filter((x) => x.state === 'waiting' || x.state === 'streaming'));
+    } else api.fullscreen(false);
   }
 });
 

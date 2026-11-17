@@ -1,7 +1,7 @@
 {
   "name": "screen-mirror-receiver",
   "productName": "화면 미러링 수신기",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "교실 PC용 Android 화면 미러링 수신 프로그램",
   "main": "src/main.js",
   "private": true,
@@ -9,7 +9,9 @@
     "start": "electron .",
     "test": "node --test test/server.test.js",
     "test:sender": "electron test/fake-sender.js",
-    "dist": "electron-builder --win nsis"
+    "start:sender": "electron src/sender/main.js",
+    "dist": "electron-builder --win nsis",
+    "dist:sender": "electron-builder --win nsis --config electron-builder-sender.json"
   },
   "dependencies": {
     "qrcode": "1.5.4",
@@ -23,16 +25,26 @@
     "appId": "app.screenmirror.receiver",
     "productName": "ScreenMirrorReceiver",
     "executableName": "ScreenMirrorReceiver",
-    "directories": { "output": "dist" },
-    "files": ["src/**/*", "package.json"],
-    "win": { "target": ["nsis"] },
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
     "nsis": {
       "oneClick": false,
       "perMachine": true,
       "allowElevation": true,
       "allowToChangeInstallationDirectory": true,
       "include": "build/installer.nsh",
-      "shortcutName": "화면 미러링 수신기"
+      "shortcutName": "화면 미러링 수신기",
+      "artifactName": "ScreenMirrorReceiver-Setup-${version}.${ext}"
     }
   }
 }

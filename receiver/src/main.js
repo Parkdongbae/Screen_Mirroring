@@ -8,6 +8,9 @@ const crypto = require('crypto');
 const QRCode = require('qrcode');
 const { ReceiverServer } = require('./server');
 
+// 개발 중에는 설치된 수신기와 겹치지 않게 설정 폴더를 따로 쓸 수 있다.
+if (!app.isPackaged && process.env.SMIRROR_USER_DATA) app.setPath('userData', process.env.SMIRROR_USER_DATA);
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 }
@@ -105,12 +108,11 @@ async function pushState(state) {
   }
   lastState = { ...state, qr };
   send('state', lastState);
-  updatePowerBlocker(state.state);
+  updatePowerBlocker(state.sessions.some((x) => x.state === 'waiting' || x.state === 'streaming'));
 }
 
 // 공유 중에는 PC가 절전·화면 꺼짐으로 바뀌지 않게 한다(FR-15).
-function updatePowerBlocker(state) {
-  const active = state === 'waiting' || state === 'streaming';
+function updatePowerBlocker(active) {
   if (active && blockerId === null) blockerId = powerSaveBlocker.start('prevent-display-sleep');
   if (!active && blockerId !== null) {
     powerSaveBlocker.stop(blockerId);
@@ -139,13 +141,15 @@ function displayList() {
 // ---- IPC ----
 function setupIpc() {
   ipcMain.handle('init', () => ({ settings, displays: displayList(), state: lastState }));
-  ipcMain.on('approve', () => server.approve());
-  ipcMain.on('reject', () => server.reject('rejected'));
-  ipcMain.on('stop', () => server.endSession('user'));
-  ipcMain.on('keyframe', () => server.requestKeyframe());
-  ipcMain.on('new-code', () => {
-    if (!server.session) server.newCode();
-  });
+  ipcMain.on('approve', (_e, id) => server.approve(id));
+  ipcMain.on('approve-all', () => server.approveAll());
+  ipcMain.on('reject', (_e, id) => server.reject(id, 'rejected'));
+  ipcMain.on('stop', (_e, id) => server.endSession(id, 'user'));
+  ipcMain.on('stop-all', () => server.endAll());
+  ipcMain.on('mute', (_e, id, muted) => server.setMuted(id, muted, 'teacher'));
+  ipcMain.on('mute-all', () => server.muteAll());
+  ipcMain.on('keyframe', (_e, id) => server.requestKeyframe(id));
+  ipcMain.on('new-code', () => server.newCode());
   ipcMain.on('fullscreen', (_e, v) => win && win.setFullScreen(v ?? !win.isFullScreen()));
   ipcMain.handle('displays', () => displayList());
   ipcMain.on('set-display', (_e, id) => {
@@ -164,15 +168,19 @@ function setupIpc() {
 async function main() {
   loadSettings();
   const cert = await loadCert();
-  server = new ReceiverServer({ ...cert, pcName: settings.pcName, mode: settings.mode });
+  server = new ReceiverServer({
+    ...cert,
+    pcName: settings.pcName,
+    mode: settings.mode,
+    port: !app.isPackaged && process.env.SMIRROR_PORT ? Number(process.env.SMIRROR_PORT) : undefined,
+  });
   server.on('state', (s) => pushState(s));
   server.on('notice', (n) => send('notice', n));
   server.on('ended', (e) => send('notice', { level: 'info', text: e.text }));
   server.on('video-config', (c) => send('video-config', c));
-  server.on('video', (v) => send('video', { data: v.data, key: v.key, pts: Number(v.pts) }));
+  server.on('video', (v) => send('video', { id: v.id, data: v.data, key: v.key, pts: Number(v.pts) }));
   server.on('audio-config', (c) => send('audio-config', c));
   server.on('audio', (a) => send('audio', a));
-  server.on('audio-status', (v) => send('audio-status', v));
   setupIpc();
   createWindow();
   try {
@@ -193,7 +201,7 @@ function setupDevHooks() {
   const env = process.env;
   if (env.SMIRROR_DEV_CODE) {
     const force = () => {
-      if (!server.session && server.code !== env.SMIRROR_DEV_CODE) {
+      if (server.code !== env.SMIRROR_DEV_CODE) {
         server.code = env.SMIRROR_DEV_CODE;
         server._emitState();
       }
@@ -202,7 +210,20 @@ function setupDevHooks() {
     server.on('state', force);
   }
   if (env.SMIRROR_AUTO_APPROVE) {
-    server.on('state', (s) => s.state === 'request' && setTimeout(() => server.approve(), 300));
+    server.on('state', (s) => s.sessions.some((x) => x.state === 'request') && setTimeout(() => server.approveAll(), Number(env.SMIRROR_AUTO_APPROVE) > 1 ? Number(env.SMIRROR_AUTO_APPROVE) : 300));
+  }
+  if (env.SMIRROR_STATS) {
+    win?.webContents.on('console-message', (e) => console.log(e.message ?? e));
+    const c = { video: 0, key: 0, audio: 0, audioBytes: 0 };
+    server.on('video', (v) => { c.video++; if (v.key) c.key++; });
+    server.on('audio', (a) => { c.audio++; c.audioBytes += a.data.length; });
+    server.on('audio-config', (a) => console.log('[stats] audio-config', JSON.stringify(a)));
+    server.on('video-config', (v) => console.log('[stats] video-config', JSON.stringify(v)));
+    setInterval(() => {
+      const st = (lastState?.sessions || []).map((x) => `${x.id}:${x.state}${x.muted ? '(음소거)' : ''}`).join(',');
+      console.log(`[stats] sessions=[${st}] video=${c.video} key=${c.key} audio=${c.audio} audioKB=${(c.audioBytes / 1024) | 0}`);
+      Object.assign(c, { video: 0, key: 0, audio: 0, audioBytes: 0 });
+    }, 2000);
   }
   if (env.SMIRROR_SHOTS) {
     fs.mkdirSync(env.SMIRROR_SHOTS, { recursive: true });
@@ -210,7 +231,7 @@ function setupDevHooks() {
     setInterval(async () => {
       if (!win) return;
       const img = await win.webContents.capturePage();
-      fs.writeFileSync(path.join(env.SMIRROR_SHOTS, `shot-${String(n++).padStart(2, '0')}-${lastState?.state}.png`), img.toPNG());
+      fs.writeFileSync(path.join(env.SMIRROR_SHOTS, `shot-${String(n++).padStart(2, '0')}-${lastState?.sessions?.length || 0}.png`), img.toPNG());
     }, 1500);
   }
 }

@@ -64,6 +64,7 @@ final class MirrorSession {
     private volatile String mode = "stable";
     private volatile String pcName = "";
     private volatile boolean dropUntilKey = false;
+    private volatile boolean audioMuted = false; // 교실 PC에서 이 기기의 소리를 끈 상태
     private volatile StreamSink sink;
 
     private Context app;
@@ -146,6 +147,7 @@ final class MirrorSession {
         queuedBytes.set(0);
         queuedVideoBytes.set(0);
         dropUntilKey = false;
+        audioMuted = false;
         setState(State.CONNECTING, target == null ? "같은 네트워크에서 PC를 찾는 중입니다…" : "PC에 연결하는 중입니다…");
         new Thread(() -> runConnect(gen, target, code, deviceName, audio), "mirror-connect").start();
     }
@@ -266,6 +268,9 @@ final class MirrorSession {
                 } else if ("mode".equals(t)) {
                     mode = j.optString("v", mode);
                     if (k != null) k.setMode(mode);
+                } else if ("audio_mute".equals(t)) {
+                    audioMuted = j.optBoolean("v", false);
+                    if (state == State.STREAMING) setState(State.STREAMING, streamingMessage());
                 } else if ("bye".equals(t)) {
                     fail(gen, "timeout".equals(j.optString("reason"))
                             ? "시간 안에 화면 공유가 시작되지 않아 PC가 연결을 종료했습니다."
@@ -357,7 +362,7 @@ final class MirrorSession {
     }
 
     void sendAudio(byte[] pcm, long ptsUs) {
-        if (state != State.STREAMING) return;
+        if (state != State.STREAMING || audioMuted) return; // 교실 PC에서 끈 소리는 보내지 않는다
         if (queuedBytes.get() > 4_000_000) return; // 심하게 밀리면 소리도 버린다
         queue.addLast(new Packet(Protocol.AUDIO, 0, ptsUs, pcm, false));
         queuedBytes.addAndGet(pcm.length);
@@ -373,7 +378,13 @@ final class MirrorSession {
     // ---------- 단계 전환 ----------
 
     void onStreamingStarted() {
-        if (state == State.NEED_CONSENT) setState(State.STREAMING, "전자칠판에 화면을 보내는 중입니다.");
+        if (state == State.NEED_CONSENT) setState(State.STREAMING, streamingMessage());
+    }
+
+    private String streamingMessage() {
+        return audioMuted
+                ? "전자칠판에 화면을 보내는 중입니다.\n여러 기기가 함께 보이고 있어 선생님 PC에서 이 기기의 소리를 꺼 두었습니다."
+                : "전자칠판에 화면을 보내는 중입니다.\n다른 앱으로 이동해도 공유가 계속됩니다.";
     }
 
     void consentDenied() {

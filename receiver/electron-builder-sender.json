@@ -1,0 +1,19 @@
+{
+  "appId": "app.screenmirror.sender.windows",
+  "productName": "ScreenMirrorSender",
+  "executableName": "ScreenMirrorSender",
+  "extraMetadata": {
+    "name": "screen-mirror-sender",
+    "productName": "화면 보내기",
+    "main": "src/sender/main.js"
+  },
+  "directories": { "output": "dist" },
+  "files": ["src/protocol.js", "src/sender/**/*", "package.json"],
+  "win": { "target": ["nsis"] },
+  "nsis": {
+    "oneClick": true,
+    "perMachine": false,
+    "shortcutName": "화면 보내기",
+    "artifactName": "ScreenMirrorSender-Setup-${version}.${ext}"
+  }
+}

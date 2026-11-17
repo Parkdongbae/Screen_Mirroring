@@ -270,9 +270,6 @@ public class MainActivity extends AppCompatActivity implements MirrorSession.Lis
             case IDLE:
                 status.setText("PC 화면의 QR 코드를 스캔하거나 접속 코드를 입력해 주세요.");
                 break;
-            case STREAMING:
-                status.setText("전자칠판에 화면을 보내는 중입니다.\n다른 앱으로 이동해도 공유가 계속됩니다.");
-                break;
             case NEED_CONSENT:
                 status.setText(message);
                 requestConsent();

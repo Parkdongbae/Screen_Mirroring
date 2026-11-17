@@ -20,9 +20,9 @@
       <p id="code" class="code">------</p>
       <p id="expires" class="muted"></p>
       <ol class="steps">
-        <li>휴대전화를 <strong>학교 Wi-Fi</strong>에 연결합니다.</li>
-        <li>‘화면 미러링’ 앱에서 QR 코드를 스캔하거나 코드를 입력합니다.</li>
-        <li>이 화면에서 연결을 <strong>허용</strong>합니다.</li>
+        <li>휴대전화·노트북을 <strong>학교 네트워크</strong>에 연결합니다.</li>
+        <li>휴대전화는 ‘화면 미러링’ 앱에서 QR 코드를 스캔하고, 노트북은 ‘화면 보내기’에 코드를 입력합니다.</li>
+        <li>이 화면에서 연결을 <strong>허용</strong>합니다. 최대 <strong>6대</strong>까지 나눠서 보여 줍니다.</li>
       </ol>
       <p id="address" class="muted small"></p>
       <div class="row">
@@ -33,38 +33,57 @@
     </section>
   </main>
 
-  <!-- 휴대전화 동의 대기 -->
-  <main id="waiting" class="screen center hidden">
-    <div class="spinner" aria-hidden="true"></div>
-    <h2>휴대전화에서 화면 공유를 시작해 주세요</h2>
-    <p class="muted">휴대전화에 나타난 안내에서 <strong>‘지금 시작’</strong>을 누르면 화면이 표시됩니다.</p>
-    <button id="btn-cancel-waiting" class="ghost">취소</button>
-  </main>
-
-  <!-- 공유 화면 -->
-  <main id="stream" class="screen hidden">
-    <canvas id="video"></canvas>
+  <!-- 공유 화면: 기기별 분할 -->
+  <main id="stage" class="screen hidden">
+    <div id="grid" class="grid"></div>
     <div id="toolbar" class="toolbar">
-      <span id="stream-device" class="device"></span>
-      <span id="stream-audio" class="badge hidden"></span>
+      <button id="btn-join" class="tool join" title="QR 코드와 접속 코드 크게 보기">참여 코드 <strong id="join-code">------</strong> <span id="join-count" class="muted"></span></button>
       <div class="spacer"></div>
-      <button id="btn-mute" class="tool" title="소리 끄기/켜기">소리 켬</button>
-      <input id="volume" type="range" min="0" max="1" step="0.05" aria-label="음량" />
+      <button id="btn-mute-all" class="tool">모두 소리 끄기</button>
+      <input id="volume" type="range" min="0" max="1" step="0.05" aria-label="전체 음량" title="전체 음량" />
       <button id="btn-fullscreen" class="tool">전체 화면</button>
       <button id="btn-settings" class="tool">설정</button>
-      <button id="btn-stop" class="tool danger">공유 종료</button>
+      <button id="btn-stop-all" class="tool danger">모두 종료</button>
     </div>
   </main>
 
-  <!-- 연결 요청 승인 -->
-  <div id="request" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="request-title">
-    <div class="modal-card">
-      <h2 id="request-title">화면 공유 요청</h2>
-      <p class="request-device" id="request-device"></p>
-      <p class="muted">이 휴대전화의 화면과 소리를 전자칠판에 표시할까요?</p>
-      <div class="row big">
-        <button id="btn-reject" class="ghost large">거절</button>
-        <button id="btn-approve" class="primary large">허용</button>
+  <template id="tile-tpl">
+    <div class="tile">
+      <canvas></canvas>
+      <div class="tile-wait">
+        <div class="spinner small" aria-hidden="true"></div>
+        <p>화면 공유가 시작되기를 기다리는 중</p>
+        <p class="muted small">휴대전화는 ‘지금 시작’을 눌러 주세요</p>
+      </div>
+      <div class="tile-bar">
+        <span class="tile-name"></span>
+        <span class="tile-badge hidden"></span>
+        <span class="spacer"></span>
+        <button class="tile-btn tile-mute" title="이 기기의 소리 켜기/끄기"></button>
+        <button class="tile-btn tile-focus" title="이 화면만 크게 보기">크게</button>
+        <button class="tile-btn tile-stop danger" title="이 기기의 공유 종료">종료</button>
+      </div>
+    </div>
+  </template>
+
+  <!-- 연결 요청 목록 -->
+  <aside id="requests" class="requests hidden" aria-live="polite">
+    <div class="requests-head">
+      <h2>연결 요청</h2>
+      <button id="btn-approve-all" class="primary hidden">모두 허용</button>
+    </div>
+    <ul id="request-list"></ul>
+  </aside>
+
+  <!-- 공유 중 QR 크게 보기 -->
+  <div id="join" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="join-title">
+    <div class="modal-card join-card">
+      <h2 id="join-title">다른 모둠도 참여할 수 있어요</h2>
+      <img id="join-qr" alt="접속용 QR 코드" />
+      <p class="code big-code" id="join-code-big"></p>
+      <p class="muted" id="join-address"></p>
+      <div class="row end">
+        <button id="btn-join-close" class="primary">닫기</button>
       </div>
     </div>
   </div>
@@ -80,7 +99,7 @@
         <select id="sel-audio"></select>
       </label>
       <fieldset>
-        <legend>전송 품질</legend>
+        <legend>전송 품질 <span class="muted small">(3대 이상이면 자동으로 분할 화면 화질)</span></legend>
         <label class="radio"><input type="radio" name="mode" value="stable" /> 안정성 우선 <span class="muted small">(끊김이 적음, 720p)</span></label>
         <label class="radio"><input type="radio" name="mode" value="quality" /> 화질 우선 <span class="muted small">(글씨가 선명함, 1080p)</span></label>
       </fieldset>

@@ -10,6 +10,6 @@ app.whenReady().then(() => {
     webPreferences: { nodeIntegration: true, contextIsolation: false, backgroundThrottling: false },
   });
   const args = process.argv.slice(2).filter((a) => !a.startsWith('-') && !a.endsWith('.js') && a !== '.');
-  w.loadFile(path.join(__dirname, 'fake-sender.html'), { query: { code: args[0] || '123456', host: args[1] || '127.0.0.1', port: args[2] || '47600' } });
+  w.loadFile(path.join(__dirname, 'fake-sender.html'), { query: { code: args[0] || '123456', host: args[1] || '127.0.0.1', port: args[2] || '47600', name: process.env.SMIRROR_FAKE_NAME || '시험용 송신기', seconds: process.env.SMIRROR_FAKE_SECONDS || '11' } });
   w.webContents.on('console-message', (_e, _l, msg) => console.log('[sender]', msg));
 });

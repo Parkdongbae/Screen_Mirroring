@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'" />
+  <title>화면 보내기</title>
+  <link rel="stylesheet" href="sender.css" />
+</head>
+<body>
+  <header>
+    <p class="eyebrow">교실 화면 미러링</p>
+    <h1>화면 보내기</h1>
+    <p class="muted">내 노트북 화면을 전자칠판에 보여 줍니다.</p>
+  </header>
+
+  <section id="status" class="status" aria-live="polite">
+    <div id="spinner" class="spinner hidden" aria-hidden="true"></div>
+    <p id="status-text">칠판에 표시된 6자리 접속 코드를 입력해 주세요.</p>
+  </section>
+
+  <!-- 연결 전 -->
+  <form id="form" autocomplete="off">
+    <label>접속 코드
+      <input id="code" class="code" inputmode="numeric" maxlength="6" pattern="\d{6}" placeholder="000000" />
+    </label>
+    <label>칠판에 표시될 이름
+      <input id="name" maxlength="30" />
+    </label>
+    <label class="check"><input id="audio" type="checkbox" /> 노트북 소리도 함께 보내기 <span class="muted small">(공유 중에는 노트북 스피커가 꺼집니다)</span></label>
+    <label id="display-row" class="hidden">보낼 화면
+      <select id="display"></select>
+    </label>
+    <details>
+      <summary>코드로 연결이 안 될 때</summary>
+      <p class="muted small">칠판 아래쪽에 표시된 PC 주소(예: 192.168.0.17)를 입력하면 직접 연결합니다. 포트가 47600이 아니면 ‘192.168.0.17:포트’처럼 입력합니다. 이때도 접속 코드는 필요합니다.</p>
+      <input id="address" placeholder="PC 주소" />
+    </details>
+    <button id="btn-connect" class="primary" type="submit">연결</button>
+  </form>
+
+  <!-- 연결 중·공유 중 -->
+  <section id="active" class="hidden">
+    <div id="live" class="live hidden">
+      <span class="dot" aria-hidden="true"></span>
+      <div>
+        <strong>전자칠판에 공유 중</strong>
+        <p id="live-detail" class="muted small"></p>
+      </div>
+    </div>
+    <button id="btn-stop" class="danger">공유 종료</button>
+    <button id="btn-minimize" class="ghost hidden">창 내리기</button>
+    <p id="hidden-note" class="muted small hidden">이 창은 칠판에 보이지 않습니다.</p>
+  </section>
+
+  <aside class="tip">
+    <strong>알림이 칠판에 보일 수 있어요</strong>
+    <p class="small">공유 전에 Windows 알림을 꺼 주세요(방해 금지).</p>
+    <button id="btn-notify" class="ghost small-btn" type="button">알림 설정 열기</button>
+  </aside>
+
+  <script src="sender.js"></script>
+</body>
+</html>

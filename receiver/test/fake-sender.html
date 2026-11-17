@@ -9,7 +9,7 @@ let w = 1280, h = 720, encoder = null, forceKey = true, t0 = performance.now(), 
 
 const sock = tls.connect({ host: q.get('host'), port: Number(q.get('port')), rejectUnauthorized: false }, () => {
   console.log('connected, sending HELLO');
-  sock.write(encode(T.HELLO, { proto: PROTO_VERSION, code: q.get('code'), device: '시험용 송신기', model: 'fake', android: 14, audio: true, app: 'test' }));
+  sock.write(encode(T.HELLO, { proto: PROTO_VERSION, code: q.get('code'), device: q.get('name'), model: 'fake', android: 14, audio: true, app: 'test' }));
 });
 sock.setNoDelay(true);
 const parser = new FrameParser((f) => {
@@ -73,6 +73,6 @@ function start() {
   // 회전 시험: 4초 뒤 세로, 8초 뒤 가로
   setTimeout(() => { w = 720; h = 1280; configure(); }, 4000);
   setTimeout(() => { w = 1280; h = 720; configure(); }, 8000);
-  setTimeout(() => { console.log('sending bye'); sock.write(encode(T.CONTROL, { t: 'bye', reason: 'user' })); }, 11000);
+  setTimeout(() => { console.log('sending bye'); sock.write(encode(T.CONTROL, { t: 'bye', reason: 'user' })); }, Number(q.get('seconds')) * 1000);
 }
 </script>

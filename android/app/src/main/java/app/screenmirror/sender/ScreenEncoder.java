@@ -89,7 +89,12 @@ final class ScreenEncoder implements MirrorSession.StreamSink, DisplayManager.Di
     // ---------- 크기·화질 ----------
 
     private void applyModeLimits() {
-        if ("quality".equals(mode)) {
+        if ("grid".equals(mode)) {
+            // 교실 PC가 여러 화면으로 나눠 보여 줄 때: 작은 칸에 맞춰 낮춘다.
+            minBitrate = 300_000;
+            maxBitrate = 1_500_000;
+            bitrate = 1_000_000;
+        } else if ("quality".equals(mode)) {
             minBitrate = 1_500_000;
             maxBitrate = 8_000_000;
             bitrate = 5_000_000;
@@ -101,6 +106,7 @@ final class ScreenEncoder implements MirrorSession.StreamSink, DisplayManager.Di
     }
 
     private int maxLongSide() {
+        if ("grid".equals(mode)) return 960;
         return "quality".equals(mode) ? 1920 : 1280;
     }
 
