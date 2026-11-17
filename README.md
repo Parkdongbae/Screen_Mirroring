@@ -8,12 +8,17 @@ Android 휴대전화의 화면과 소리를 교실 Windows PC로 보내, PC에 H
 | `android/` | Android 송신 앱 | Java, MediaProjection + MediaCodec H.264, AudioPlaybackCapture(PCM) |
 | `docs/` | 프로토콜 문서 | TLS(인증서 지문 고정) + 자체 프레임 형식 |
 
-## 결과물
+## 내려받기
+
+[최신 릴리즈](https://github.com/Parkdongbae/Screen_Mirroring/releases/latest)에서 내려받는다. 현재 **v0.1.0 시험판**이며 실제 휴대전화로는 아직 시험하지 않았다.
 
 | 파일 | 용도 |
 |---|---|
-| `receiver/dist/ScreenMirrorReceiver Setup 0.1.0.exe` | PC 설치 파일. 설치 시 Windows 방화벽 허용 규칙(도메인·사설 네트워크)을 자동 추가한다. |
-| `android/app/build/outputs/apk/debug/app-debug.apk` | 시험용 APK(디버그 서명) |
+| `ScreenMirrorReceiver-Setup-0.1.0.exe` | Windows 11 PC 설치 파일. 설치 시 Windows 방화벽 허용 규칙(도메인·사설 네트워크)을 자동 추가한다. |
+| `ScreenMirror-Android-0.1.0-debug.apk` | Android 8.0 이상 송신 앱(디버그 서명). 소리 전송은 Android 10 이상. |
+| `SHA256SUMS.txt` | 파일 변조 확인용 해시 |
+
+직접 빌드하면 PC 설치 파일은 `receiver/dist/`, APK는 `android/app/build/outputs/apk/debug/`에 생긴다(아래 ‘개발’ 참고).
 
 ## 교실에서 쓰는 법
 
@@ -111,3 +116,7 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 | 설치 시 방화벽 규칙 추가 | 설치 스크립트 작성, 실제 설치로는 미확인 |
 | APK를 PC에서 내려받는 QR(FR-18, P1) | 미구현 |
 | 끊김 후 자동 재연결(FR-12, P1) | 미구현 |
+
+## 라이선스
+
+[MIT License](LICENSE). 함께 배포되는 주요 라이브러리는 각자의 라이선스를 따른다: Electron(MIT), qrcode(MIT), selfsigned(MIT), ZXing Android Embedded(Apache-2.0), AndroidX·Material Components(Apache-2.0).
