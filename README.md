@@ -10,7 +10,7 @@ Android 휴대전화와 학생용 Windows 11 노트북의 화면과 소리를 �
 
 ## 내려받기
 
-[최신 릴리즈](https://github.com/Parkdongbae/Screen_Mirroring/releases/latest)에서 내려받는다. 현재 **v0.3.0 시험판**이며 실제 휴대전화·노트북 여러 대로는 아직 시험하지 않았다.
+[릴리즈 목록](https://github.com/Parkdongbae/Screen_Mirroring/releases)에서 내려받는다. 현재 **v0.3.0 시험판**이며 실제 휴대전화·노트북 여러 대로는 아직 시험하지 않았다.
 
 | 파일 | 용도 |
 |---|---|
