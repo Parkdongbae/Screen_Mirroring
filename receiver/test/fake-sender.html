@@ -1,0 +1,78 @@
+<!doctype html><meta charset="utf-8"><canvas id="c"></canvas>
+<script>
+const tls = require('tls');
+const { T, encode, FrameParser, parseJson, PROTO_VERSION } = require('../src/protocol');
+const q = new URLSearchParams(location.search);
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let w = 1280, h = 720, encoder = null, forceKey = true, t0 = performance.now(), frameNo = 0, streaming = false;
+
+const sock = tls.connect({ host: q.get('host'), port: Number(q.get('port')), rejectUnauthorized: false }, () => {
+  console.log('connected, sending HELLO');
+  sock.write(encode(T.HELLO, { proto: PROTO_VERSION, code: q.get('code'), device: '시험용 송신기', model: 'fake', android: 14, audio: true, app: 'test' }));
+});
+sock.setNoDelay(true);
+const parser = new FrameParser((f) => {
+  if (f.type === T.ACCEPT) { console.log('ACCEPT'); start(); }
+  else if (f.type === T.REJECT) { console.log('REJECT', f.payload.toString()); window.close(); }
+  else if (f.type === T.CONTROL) {
+    const c = parseJson(f.payload);
+    if (c.t === 'keyframe') forceKey = true;
+    if (c.t === 'bye') { console.log('bye from PC'); window.close(); }
+  } else if (f.type === T.PING) sock.write(encode(T.PONG));
+});
+sock.on('data', (d) => parser.push(d));
+sock.on('close', () => { console.log('closed'); window.close(); });
+
+function configure() {
+  canvas.width = w; canvas.height = h;
+  encoder?.close();
+  encoder = new VideoEncoder({
+    output: (chunk) => {
+      const buf = Buffer.alloc(chunk.byteLength); chunk.copyTo(buf);
+      sock.write(encode(T.VIDEO, buf, { flags: chunk.type === 'key' ? 1 : 0, pts: BigInt(Math.round(chunk.timestamp)) }));
+    },
+    error: (e) => console.log('enc error', e.message),
+  });
+  encoder.configure({ codec: 'avc1.42E01F', width: w, height: h, bitrate: 3_000_000, framerate: 30, latencyMode: 'realtime', avc: { format: 'annexb' } });
+  sock.write(encode(T.VIDEO_CONFIG, { w, h }));
+  forceKey = true;
+}
+
+function drawFrame() {
+  const t = (performance.now() - t0) / 1000;
+  ctx.fillStyle = '#1d4ed8'; ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = '#fbbf24'; ctx.beginPath(); ctx.arc(w / 2 + Math.cos(t * 2) * w / 3, h / 2 + Math.sin(t * 2) * h / 4, 60, 0, 7); ctx.fill();
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 64px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('시험 화면 ' + (w > h ? '가로' : '세로'), w / 2, h / 2);
+  ctx.font = '40px sans-serif'; ctx.fillText(t.toFixed(1) + '초  ' + w + '×' + h, w / 2, h / 2 + 70);
+}
+
+function start() {
+  streaming = true;
+  sock.write(encode(T.AUDIO_CONFIG, { rate: 48000, channels: 2, format: 's16le' }));
+  sock.write(encode(T.CONTROL, { t: 'audio', v: 'on' }));
+  configure();
+  setInterval(() => {
+    drawFrame();
+    const f = new VideoFrame(canvas, { timestamp: Math.round((performance.now() - t0) * 1000) });
+    encoder.encode(f, { keyFrame: forceKey || frameNo % 120 === 0 }); forceKey = false; frameNo++;
+    f.close();
+  }, 33);
+  // 440Hz 사인파, 10ms 단위
+  let sample = 0, sent = 0;
+  setInterval(() => {
+    const due = Math.floor((performance.now() - t0) * 48);
+    while (sent + 480 <= due) {
+      const pcm = Buffer.alloc(480 * 4);
+      for (let i = 0; i < 480; i++) { const v = Math.round(Math.sin(2 * Math.PI * 440 * sample++ / 48000) * 6000); pcm.writeInt16LE(v, i * 4); pcm.writeInt16LE(v, i * 4 + 2); }
+      sock.write(encode(T.AUDIO, pcm, { pts: BigInt(sent * 1000 / 48 | 0) }));
+      sent += 480;
+    }
+  }, 10);
+  // 회전 시험: 4초 뒤 세로, 8초 뒤 가로
+  setTimeout(() => { w = 720; h = 1280; configure(); }, 4000);
+  setTimeout(() => { w = 1280; h = 720; configure(); }, 8000);
+  setTimeout(() => { console.log('sending bye'); sock.write(encode(T.CONTROL, { t: 'bye', reason: 'user' })); }, 11000);
+}
+</script>
